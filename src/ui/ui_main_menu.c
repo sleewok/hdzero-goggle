@@ -28,6 +28,7 @@
 #include "ui/page_power.h"
 #include "ui/page_record.h"
 #include "ui/page_scannow.h"
+#include "ui/page_scananalog.h"
 #include "ui/page_sleep.h"
 #include "ui/page_source.h"
 #include "ui/page_storage.h"
@@ -44,16 +45,18 @@ progress_bar_t progress_bar;
 
 static lv_obj_t *menu;
 static lv_obj_t *root_page;
+static lv_obj_t *menu_section;
+static lv_obj_t *menu_scroll_up;
+static lv_obj_t *menu_scroll_down;
 
 /**
  * To contain all menu pages.
  */
-
-#define PAGE_PACK_MAX_NUM 19
+#define PAGE_PACK_MAX_NUM 20
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
-static page_pack_t *post_bootup_actions[18];
+static page_pack_t *post_bootup_actions[PAGE_PACK_MAX_NUM];
 static size_t post_bootup_actions_count = 0;
 static bool bootup_actions_fired = false;
 
@@ -80,6 +83,71 @@ static void deselect_menu_tab(page_pack_t *pp) {
     // see lv_theme_default.c styles->menu_pressed
     lv_obj_set_style_bg_opa(((lv_menu_t *)menu)->selected_tab, LV_OPA_20, LV_STATE_CHECKED);
     lv_obj_add_flag(pp->icon, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_menu_scroll_indicators(lv_obj_t *scroll_obj) {
+    if (!menu_scroll_up || !menu_scroll_down || !scroll_obj) {
+        return;
+    }
+
+    lv_obj_update_layout(scroll_obj);
+    const lv_coord_t top = lv_obj_get_scroll_top(scroll_obj);
+    const lv_coord_t bottom = lv_obj_get_scroll_bottom(scroll_obj);
+    const lv_coord_t content_h = lv_obj_get_self_height(scroll_obj);
+    const lv_coord_t view_h = lv_obj_get_height(scroll_obj);
+    const bool has_overflow = (content_h > view_h + 2) || (top > 0) || (bottom > 0);
+
+    if (!has_overflow) {
+        lv_obj_add_flag(menu_scroll_up, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(menu_scroll_down, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    if (top > 0) {
+        lv_obj_clear_flag(menu_scroll_up, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(menu_scroll_up, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (bottom > 0) {
+        lv_obj_clear_flag(menu_scroll_down, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(menu_scroll_down, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void position_menu_scroll_indicators() {
+    if (!menu_scroll_up || !menu_scroll_down || !menu_section) {
+        return;
+    }
+
+    lv_area_t area;
+    lv_obj_get_coords(menu_section, &area);
+    lv_obj_update_layout(menu_scroll_up);
+    lv_obj_update_layout(menu_scroll_down);
+
+    const lv_coord_t up_w = lv_obj_get_width(menu_scroll_up);
+    const lv_coord_t up_h = lv_obj_get_height(menu_scroll_up);
+    const lv_coord_t down_w = lv_obj_get_width(menu_scroll_down);
+    const lv_coord_t down_h = lv_obj_get_height(menu_scroll_down);
+
+    lv_coord_t top_y = area.y1 + 2;
+    if (top_y < 10) {
+        top_y = 10;
+    }
+    lv_coord_t bottom_y = area.y2 - down_h - 2;
+    if (bottom_y > lv_disp_get_ver_res(NULL) - down_h - 10) {
+        bottom_y = lv_disp_get_ver_res(NULL) - down_h - 10;
+    }
+
+    lv_obj_set_pos(menu_scroll_up, area.x1 - up_w - 10, top_y);
+    lv_obj_set_pos(menu_scroll_down, area.x1 - down_w - 10, bottom_y);
+}
+
+static void menu_scroll_event_cb(lv_event_t *e) {
+    lv_obj_t *scroll_obj = lv_event_get_target(e);
+    position_menu_scroll_indicators();
+    update_menu_scroll_indicators(scroll_obj);
 }
 
 void submenu_enter(void) {
@@ -219,7 +287,14 @@ void menu_nav(uint8_t key) {
         if (selected >= page_packs_count)
             selected -= page_packs_count;
     }
-    lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected), LV_EVENT_CLICKED, NULL);
+    lv_obj_t *item = lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected);
+    if (item) {
+        lv_event_send(item, LV_EVENT_CLICKED, NULL);
+        if (menu_section) {
+            lv_obj_scroll_to_view(item, LV_ANIM_OFF);
+            update_menu_scroll_indicators(menu_section);
+        }
+    }
 }
 
 static void menu_reinit(void) {
@@ -300,6 +375,7 @@ static int post_bootup_actions_cmp(const void *lhs, const void *rhs) {
 void main_menu_init(void) {
     // Initialize All Pages
     page_packs[page_packs_count++] = &pp_scannow;
+    page_packs[page_packs_count++] = &pp_scananalog;
     page_packs[page_packs_count++] = &pp_source;
     page_packs[page_packs_count++] = &pp_imagesettings;
     page_packs[page_packs_count++] = &pp_osd;
@@ -335,11 +411,16 @@ void main_menu_init(void) {
 
     root_page = lv_menu_page_create(menu, "aaa");
 
-    lv_obj_t *section = lv_menu_section_create(root_page);
-    lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLLABLE);
+    menu_section = lv_menu_section_create(root_page);
+    lv_obj_add_flag(menu_section, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(menu_section, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(menu_section, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_event_cb(menu_section, menu_scroll_event_cb, LV_EVENT_SCROLL, NULL);
+    lv_obj_add_event_cb(menu_section, menu_scroll_event_cb, LV_EVENT_SCROLL_END, NULL);
+    lv_obj_add_event_cb(menu_section, menu_scroll_event_cb, LV_EVENT_SIZE_CHANGED, NULL);
 
     for (uint32_t i = 0; i < page_packs_count; i++) {
-        main_menu_create_entry(menu, section, page_packs[i]);
+        main_menu_create_entry(menu, menu_section, page_packs[i]);
         if (page_packs[i]->post_bootup_run_priority > 0 && page_packs[i]->post_bootup_run_function != NULL) {
             post_bootup_actions[post_bootup_actions_count++] = page_packs[i];
         }
@@ -348,9 +429,9 @@ void main_menu_init(void) {
     // Resort based on priority
     qsort(post_bootup_actions, post_bootup_actions_count, sizeof(post_bootup_actions[0]), post_bootup_actions_cmp);
 
-    lv_obj_add_style(section, &style_rootmenu, LV_PART_MAIN);
-    lv_obj_set_size(section, UI_MENU_ROOT_SIZE);
-    lv_obj_set_pos(section, 0, 0);
+    lv_obj_add_style(menu_section, &style_rootmenu, LV_PART_MAIN);
+    lv_obj_set_size(menu_section, UI_MENU_ROOT_SIZE);
+    lv_obj_set_pos(menu_section, 0, 0);
 
     lv_obj_set_size(root_page, UI_MENU_ROOT_SIZE);
     lv_obj_set_pos(root_page, 0, 0);
@@ -361,6 +442,24 @@ void main_menu_init(void) {
     lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), 0), LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(lv_menu_get_sidebar_header(menu), LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(lv_menu_get_cur_sidebar_page(menu), LV_OBJ_FLAG_SCROLLABLE);
+
+    menu_scroll_up = lv_img_create(lv_scr_act());
+    lv_img_set_src(menu_scroll_up, &img_arrow);
+    lv_img_set_angle(menu_scroll_up, 2700);
+    lv_obj_set_style_base_dir(menu_scroll_up, LV_BASE_DIR_LTR, 0);
+    lv_obj_add_flag(menu_scroll_up, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(menu_scroll_up);
+
+    menu_scroll_down = lv_img_create(lv_scr_act());
+    lv_img_set_src(menu_scroll_down, &img_arrow);
+    lv_img_set_angle(menu_scroll_down, 900);
+    lv_obj_set_style_base_dir(menu_scroll_down, LV_BASE_DIR_LTR, 0);
+    lv_obj_add_flag(menu_scroll_down, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(menu_scroll_down);
+
+    lv_obj_update_layout(menu_section);
+    position_menu_scroll_indicators();
+    update_menu_scroll_indicators(menu_section);
 
     progress_bar.bar = lv_bar_create(lv_scr_act());
     lv_obj_set_size(progress_bar.bar, UI_MENU_PROG_BAR_SIZE);

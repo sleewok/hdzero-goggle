@@ -31,6 +31,7 @@
 #include "driver/nct75.h"
 #include "driver/rtc.h"
 #include "driver/rtc6715.h"
+#include "lang/language.h"
 #include "ui/page_common.h"
 #include "ui/page_fans.h"
 #include "ui/page_scannow.h"
@@ -149,6 +150,7 @@ static uint32_t osdFont_fhd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_FHD][OSD_WIDTH_FHD]; 
 static osd_font_t osd_font_hd;
 static osd_font_t osd_font_fhd;
 static lv_obj_t *analog_rssi_bar;
+static lv_obj_t *analog_rssi_label;
 
 void osd_llock_show(bool bShow) {
     char buf[128];
@@ -304,17 +306,36 @@ void osd_vlq_show(bool bShow) {
 }
 
 void osd_analog_rssi_update_location() {
-    if (g_setting.osd.embedded_mode == EMBEDDED_4x3)
-        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.x, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.y + 14);
-    else
-        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.x, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.y + 14);
+    int base_x, base_y;
+
+    if (g_setting.osd.embedded_mode == EMBEDDED_4x3) {
+        base_x = g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.x;
+        base_y = g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.y;
+    } else {
+        base_x = g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.x;
+        base_y = g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.y;
+    }
+
+    lv_obj_set_pos(analog_rssi_bar, base_x, base_y + 14);
+    lv_obj_align_to(analog_rssi_label, analog_rssi_bar, LV_ALIGN_OUT_LEFT_MID, -8, 0);
 }
 
 void osd_analog_rssi_create() {
 
     pthread_mutex_lock(&lvgl_mutex);
     analog_rssi_bar = lv_bar_create(scr_osd[0]);
-    lv_obj_set_size(analog_rssi_bar, 128, 16);
+    lv_obj_set_size(analog_rssi_bar, 160, 20);
+    analog_rssi_label = lv_label_create(scr_osd[0]);
+    lv_obj_set_style_text_color(analog_rssi_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_shadow_color(analog_rssi_label, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(analog_rssi_label, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(analog_rssi_label, 8, 0);
+    lv_obj_set_style_shadow_spread(analog_rssi_label, 2, 0);
+    lv_obj_set_style_shadow_ofs_x(analog_rssi_label, 0, 0);
+    lv_obj_set_style_shadow_ofs_y(analog_rssi_label, 0, 0);
+    lv_obj_set_style_text_font(analog_rssi_label, &lv_font_montserrat_18, 0);
+    lv_label_set_long_mode(analog_rssi_label, LV_LABEL_LONG_DOT);
+    lv_label_set_text(analog_rssi_label, _lang("RSSI: 0%"));
 
     osd_analog_rssi_update_location();
 
@@ -329,6 +350,7 @@ void osd_analog_rssi_create() {
     lv_obj_set_style_bg_opa(analog_rssi_bar, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_add_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(analog_rssi_label, LV_OBJ_FLAG_HIDDEN);
 
     pthread_mutex_unlock(&lvgl_mutex);
 }
@@ -339,10 +361,12 @@ void osd_analog_rssi_show(bool bShow) {
 
     if (!bShow) {
         lv_obj_add_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(analog_rssi_label, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
     lv_obj_clear_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(analog_rssi_label, LV_OBJ_FLAG_HIDDEN);
 
     int rssi_volt_mv;
 
@@ -359,6 +383,8 @@ void osd_analog_rssi_show(bool bShow) {
     }
 
     lv_bar_set_value(analog_rssi_bar, rssi_volt_mv, LV_ANIM_OFF);
+    snprintf(buf, sizeof(buf), "RSSI: %d%%", rssi_volt_mv);
+    lv_label_set_text(analog_rssi_label, buf);
 }
 
 ///////////////////////////////////:////////////////////////////////////////////
